@@ -1,0 +1,19 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+:root {
+  --noa-bg: #0f0f12;
+  --noa-surface: #1a1a1f;
+  --noa-border: #2a2a32;
+  --noa-accent: #6366f1;
+  --noa-accent-hover: #818cf8;
+  --noa-text: #e4e4e7;
+  --noa-muted: #71717a;
+}
+
+body {
+  background: var(--noa-bg);
+  color: var(--noa-text);
+  font-family: system-ui, -apple-system, sans-serif;
+}

@@ -1,0 +1,7 @@
+{
+  "name": "@noa/config",
+  "version": "0.1.0",
+  "private": true,
+  "main": "index.js",
+  "files": ["*.json", "eslint*"]
+}

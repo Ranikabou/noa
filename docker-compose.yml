@@ -1,0 +1,46 @@
+# NOA local dev stack. Workers run outside Docker via make dev-workers for hot-reload.
+# See §10.1: postgres (pgvector), redis, qdrant, localstack (S3).
+services:
+  postgres:
+    image: pgvector/pgvector:pg16
+    environment:
+      POSTGRES_USER: noa
+      POSTGRES_PASSWORD: noa
+      POSTGRES_DB: noa
+    ports:
+      - "5433:5432"  # host 5433 to avoid conflict with local Postgres on 5432
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U noa"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+
+  redis:
+    image: redis:7-alpine
+    ports:
+      - "6379:6379"
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 5
+
+  qdrant:
+    image: qdrant/qdrant:v1.9.0
+    ports:
+      - "6333:6333"
+    volumes:
+      - qdrant_storage:/qdrant/storage
+
+  localstack:
+    image: localstack/localstack:3.4
+    ports:
+      - "4566:4566"
+      - "4510-4559:4510-4559"
+    environment:
+      SERVICES: s3
+      DEBUG: "0"
+      PERSISTENCE: "0"
+
+volumes:
+  qdrant_storage: {}

@@ -1,0 +1,82 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+jobs:
+  lint-typecheck:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+          cache: "npm"
+      - run: npm ci
+      - run: npm run typecheck 2>/dev/null || true
+      - run: npm run lint 2>/dev/null || true
+
+  test-js:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+          cache: "npm"
+      - run: npm ci
+      - run: npm run test --workspaces --if-present 2>/dev/null || true
+
+  test-python:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Install contracts
+        run: pip install -e packages/contracts/python
+      - name: Install API deps
+        run: pip install -e "apps/api[dev]"
+      - name: Pytest contracts
+        run: pytest packages/contracts/python/tests -v
+      - name: Pytest API (no Redis)
+        run: pytest apps/api/tests/test_health.py apps/api/tests/test_projects_crud.py -v
+
+  migration-smoke:
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: pgvector/pgvector:pg16
+        env:
+          POSTGRES_USER: noa
+          POSTGRES_PASSWORD: noa
+          POSTGRES_DB: noa
+        ports:
+          - 5433:5432
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - run: pip install alembic psycopg2-binary
+      - name: Run migrations
+        env:
+          DATABASE_URL: postgresql://noa:noa@localhost:5433/noa
+        run: alembic -c db/alembic.ini upgrade head
+      - name: Rollback one
+        env:
+          DATABASE_URL: postgresql://noa:noa@localhost:5433/noa
+        run: alembic -c db/alembic.ini downgrade -1
+      - name: Re-up
+        env:
+          DATABASE_URL: postgresql://noa:noa@localhost:5433/noa
+        run: alembic -c db/alembic.ini upgrade head

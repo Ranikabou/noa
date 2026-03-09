@@ -1,0 +1,12 @@
+{
+  "schema_version": "1.0",
+  "floor_to_floor_height_m": 3.0,
+  "wall_thickness_exterior_m": 0.3,
+  "wall_thickness_interior_m": 0.15,
+  "slab_thickness_m": 0.25,
+  "roof_type_default": "flat",
+  "window_sill_height_m": 0.9,
+  "door_height_m": 2.1,
+  "stair_tread_depth_m": 0.28,
+  "stair_riser_height_m": 0.18
+}

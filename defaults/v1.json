@@ -1,0 +1,27 @@
+{
+  "floor_height": 3.0,
+  "slab_thickness": 0.25,
+  "wall_thickness_exterior": 0.3,
+  "wall_thickness_interior": 0.15,
+  "window_sill_height": 0.9,
+  "window_default_height": 1.2,
+  "door_default_height": 2.1,
+  "door_default_width": 0.9,
+  "roof_parapet_height": 0.2,
+  "min_room_area_sqm": 1.5,
+  "scale_estimation": {
+    "typical_building_width_m": 20.0,
+    "typical_door_width_m": 0.9,
+    "typical_bedroom_area_sqm": 12.0,
+    "typical_bathroom_area_sqm": 5.0
+  },
+  "materials": {
+    "wall_exterior": {"color_hex": "#E5E1D8", "name": "concrete"},
+    "wall_interior": {"color_hex": "#F5F2EE", "name": "plaster"},
+    "floor": {"color_hex": "#8C827A", "name": "hardwood"},
+    "ceiling": {"color_hex": "#FAFAFA", "name": "white plaster"},
+    "roof": {"color_hex": "#64605A", "name": "concrete"},
+    "window_glass": {"color_hex": "#A0D2F0", "name": "glass", "opacity": 0.4},
+    "door": {"color_hex": "#8B7355", "name": "wood"}
+  }
+}
