@@ -60,23 +60,37 @@ Return ONLY valid JSON (no markdown, no explanation):
   "ceiling_height_text": null
 }
 
-RULES — read carefully:
-1. Include EVERY enclosed space: bedrooms, bathrooms, kitchen, living, dining,
-   garage, storage, deck, porch, covered porch, closets, hallways, staircase area,
-   laundry, utility. If it has walls, include it.
-2. Room polygons: minimum 4 vertices, trace the ACTUAL shape.
-   For rectangular rooms: 4 corner points in clockwise order.
-   For L-shaped or irregular rooms: use 6-8 vertices following the real outline.
-3. Adjacent rooms MUST share wall coordinates at their common boundary
-   (same coordinate values where rooms touch).
-4. Doors: identified by quarter-circle arc symbol.
-   center_pct = midpoint of the door opening gap.
-   wall_vec_pct = the two endpoints of the wall segment containing the door.
-5. Windows: identified by parallel lines / notch symbol on a wall.
-   center_pct = midpoint of the window. wall_vec_pct = wall segment endpoints.
-6. All coordinates are PERCENTAGES of image dimensions (0.0 to 100.0).
-7. Extract ALL visible dimension text, sqft numbers, scale ratios.
-8. Every room polygon must be a CLOSED shape (last vertex connects back to first).
+CRITICAL RULES — read every one carefully:
+
+WHAT IS A ROOM BOUNDARY (trace these):
+- Thick outer walls forming the building perimeter
+- Thin interior partition walls that fully divide one space from another
+- The actual structural dividing lines between enclosed spaces
+
+WHAT IS NOT A ROOM BOUNDARY (NEVER trace these as polygon edges):
+- Bar counters, service counters, kitchen islands (even if curved or L-shaped)
+- Curved display cases, reception desks, curved bars
+- Tables, chairs, hexagonal stools, seating clusters
+- Equipment (refrigerators, ice machines, espresso machines)
+- Any element sitting inside an open space — it is FURNITURE not a wall
+- Annotation text, dimension arrows, notes
+
+ROOM POLYGON RULES:
+1. Room polygon = the STRUCTURAL WALL outline only. Ignore all furniture inside.
+2. For a large open commercial space with counters/furniture inside:
+   → The room boundary is the OUTER WALLS of that space, ignoring interior furniture.
+   → A bar counter in the middle does NOT split the room into multiple rooms.
+3. Include EVERY structurally enclosed space: main area, storage rooms, restrooms,
+   offices, mechanical rooms, hallways, stairwells.
+4. Rectangular rooms: exactly 4 corner points. L-shaped: 6 points. Irregular: trace actual corners.
+5. Adjacent rooms MUST share wall coordinates at their common boundary.
+6. Every polygon is CLOSED (first and last vertex are at the same corner).
+7. Coordinates are PERCENTAGES of image dimensions (0.0 to 100.0).
+
+DOOR/WINDOW RULES:
+8. Doors: quarter-circle arc swing symbol. center_pct = center of the door gap in the wall.
+9. Windows: parallel line notch in a wall. center_pct = center of the notch.
+10. Dimension text: extract ALL measurement annotations (e.g. "14'-0\"", "3'-6 1/2\"", "4'-0\"").
 """
 
 
@@ -266,25 +280,29 @@ def polygon_pct_to_px(polygon_pct: list, img_w: int, img_h: int) -> list:
 
 
 def snap_polygon_to_walls(polygon_px: list, hough_lines: list,
-                           snap_radius_px: float = 14.0) -> list:
+                           snap_radius_px: float = 10.0) -> list:
     """
-    Snap each polygon vertex to the nearest Hough line intersection within
-    snap_radius_px. This corrects GPT-4o's approximate coordinates to actual
-    wall line intersection points detected by OpenCV.
+    Snap each polygon vertex to the nearest PERPENDICULAR Hough line intersection
+    within snap_radius_px.
 
-    Vertices with no nearby intersection are kept at their original position.
+    Only intersections between near-perpendicular line pairs (60°-120° angle)
+    are used as snap targets. This filters out intersections within curved
+    elements (bar counters, arcs) whose lines tend to be near-parallel.
+
+    Vertices with no nearby qualifying intersection are kept as-is.
     """
     if not hough_lines or not polygon_px:
         return polygon_px
 
-    intersections = _compute_intersections(hough_lines)
+    intersections = _compute_perpendicular_intersections(hough_lines)
     if not intersections:
         return polygon_px
 
     snapped = []
+    r2 = snap_radius_px * snap_radius_px
     for vertex in polygon_px:
         best_pt = vertex
-        best_dist_sq = snap_radius_px * snap_radius_px
+        best_dist_sq = r2
         for ix, iy in intersections:
             dx = ix - vertex[0]
             dy = iy - vertex[1]
@@ -296,21 +314,48 @@ def snap_polygon_to_walls(polygon_px: list, hough_lines: list,
     return snapped
 
 
-def _compute_intersections(hough_lines: list) -> list[tuple[float, float]]:
-    """Compute pairwise intersections of wall centerlines for snap targets."""
+def _compute_perpendicular_intersections(
+        hough_lines: list,
+        min_angle_deg: float = 55.0,
+        max_angle_deg: float = 125.0,
+) -> list[tuple[float, float]]:
+    """
+    Compute intersections of Hough line pairs whose meeting angle is between
+    min_angle_deg and max_angle_deg (roughly perpendicular).
+
+    Structural wall corners are ~90°. Curved counter arc segments meet at
+    near-parallel or very obtuse angles, so they are excluded.
+    """
+    import math
+
     segments = []
     for w in hough_lines:
         pts = w.get("geometry", [])
         if len(pts) >= 2:
+            dx = float(pts[1][0]) - float(pts[0][0])
+            dy = float(pts[1][1]) - float(pts[0][1])
+            angle = math.degrees(math.atan2(dy, dx)) % 180  # 0-180
             segments.append((
                 float(pts[0][0]), float(pts[0][1]),
                 float(pts[1][0]), float(pts[1][1]),
+                angle,
             ))
 
     intersections = []
     for i in range(len(segments)):
         for j in range(i + 1, len(segments)):
-            pt = _segment_intersection(segments[i], segments[j])
+            a1 = segments[i][4]
+            a2 = segments[j][4]
+            diff = abs(a1 - a2)
+            if diff > 90:
+                diff = 180 - diff
+            # Only keep near-perpendicular pairs
+            if not (min_angle_deg <= diff + 90 - 90 or
+                    min_angle_deg <= diff <= max_angle_deg - 90 + 90):
+                # Simplified: require 55° ≤ diff ≤ 125°
+                if not (min_angle_deg <= diff <= max_angle_deg):
+                    continue
+            pt = _segment_intersection(segments[i][:4], segments[j][:4])
             if pt is not None:
                 intersections.append(pt)
     return intersections

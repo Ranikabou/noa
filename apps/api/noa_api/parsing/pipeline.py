@@ -120,7 +120,8 @@ def parse_floorplan(
     # ── Stage 1: Normalize ──────────────────────────────────────────
     _progress("normalizing", 0.06)
     norm = normalize(image_bytes)
-    img_bin = norm["image_bin"]
+    img_bin = norm["image_bin"]           # fixture-erased: for walls + rooms
+    img_bin_raw = norm.get("image_bin_raw", img_bin)  # original: for openings (arc symbols)
     img_gray = norm.get("image_gray", img_bin)
     img_w, img_h = norm["dimensions_px"]
     bounding_box = {"min_x": 0, "min_y": 0, "max_x": img_w, "max_y": img_h}
@@ -160,12 +161,13 @@ def parse_floorplan(
 
     # ── Stage 5: Openings ───────────────────────────────────────────
     _progress("detecting_openings", 0.62)
+    # Use raw binary (with arc symbols intact) for opening detection
     if use_gpt:
         gpt_openings = openings_from_gpt_geometry(gpt_geo, img_w, img_h, walls)
-        cv_openings = detect_openings(img_bin, walls)
+        cv_openings = detect_openings(img_bin_raw, walls)
         openings = merge_openings(gpt_openings, cv_openings, merge_radius_px=22.0)
     else:
-        openings = detect_openings(img_bin, walls)
+        openings = detect_openings(img_bin_raw, walls)
 
     # ── Stage 6: Room Labels ─────────────────────────────────────────
     _progress("labeling_rooms", 0.74)
