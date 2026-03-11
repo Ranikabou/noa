@@ -404,3 +404,37 @@ def detect_walls(img_bin: np.ndarray) -> list[dict]:
     walls.sort(key=lambda w: w["length_px"], reverse=True)
 
     return walls
+
+
+def detect_hough_lines_raw(img_bin: np.ndarray) -> list:
+    """
+    Return raw Hough line segments as minimal wall dicts (id + geometry only).
+
+    Used by the GPT geometry extractor as snap targets: polygon vertices from
+    GPT-4o are snapped to the nearest intersection of these raw lines, giving
+    pixel-level precision without the full parallel-pair matching overhead.
+
+    Returns more lines than detect_walls() (lower threshold, shorter min length)
+    to maximize snap coverage.
+    """
+    lines = cv2.HoughLinesP(
+        img_bin,
+        rho=1,
+        theta=np.pi / 180,
+        threshold=25,           # lower threshold → more candidate lines
+        minLineLength=10,       # shorter minimum → catch short wall segments
+        maxLineGap=12,
+    )
+    if lines is None:
+        return []
+
+    raw = []
+    for i, l in enumerate(lines):
+        x1, y1, x2, y2 = l[0]
+        raw.append({
+            "id": f"raw-{i}",
+            "geometry": [[int(x1), int(y1)], [int(x2), int(y2)]],
+            "confidence": 0.5,
+            "observation_type": "observed",
+        })
+    return raw

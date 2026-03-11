@@ -64,15 +64,29 @@ def compute_fidelity_hash(parsed_plan: dict) -> str:
 class CoordinateSystem:
     """Converts ParsedPlan pixel coordinates to world meters."""
 
-    def __init__(self, bbox: dict, rooms: list, known_sqft: float | None = None):
+    def __init__(self, bbox: dict, rooms: list,
+                 scale_info: dict | None = None,
+                 known_sqft: float | None = None):
         self.min_x = bbox.get("min_x", 0)
         self.min_y = bbox.get("min_y", 0)
         self.max_x = bbox.get("max_x", 1)
         self.max_y = bbox.get("max_y", 1)
-        self.width_px = self.max_x - self.min_x
-        self.height_px = self.max_y - self.min_y
+        self.width_px = max(self.max_x - self.min_x, 1)
+        self.height_px = max(self.max_y - self.min_y, 1)
 
-        self.px_per_meter = self._estimate_scale(rooms, known_sqft)
+        # Prefer the px_per_meter already computed by the parsing pipeline
+        # (from OCR dimension text / SQFT annotation). Fall back to area estimation.
+        if (scale_info and
+                scale_info.get("px_per_meter") and
+                float(scale_info["px_per_meter"]) > 0.1 and
+                scale_info.get("confidence", 0) >= 0.25):
+            self.px_per_meter = float(scale_info["px_per_meter"])
+            logger.info("CoordinateSystem: using parsed scale_info px_per_meter=%.2f (conf=%.2f)",
+                        self.px_per_meter, scale_info.get("confidence", 0))
+        else:
+            self.px_per_meter = self._estimate_scale(rooms, known_sqft)
+            logger.info("CoordinateSystem: estimated px_per_meter=%.2f", self.px_per_meter)
+
         self.origin_px = (self.min_x, self.max_y)
 
     def _estimate_scale(self, rooms: list, known_sqft: float | None) -> float:
@@ -439,13 +453,34 @@ def _build_opening_mesh(opening: dict, walls: list, cs: CoordinateSystem,
 
 
 def _is_likely_window(opening: dict, walls: list, cs: CoordinateSystem) -> bool:
-    """Heuristic: if opening is on an exterior wall (bbox edge), likely window."""
+    """
+    Determine if an opening is a window vs a door.
+
+    Priority:
+    1. Trust opening_type from ParsedPlan if set explicitly ('window' or 'door').
+    2. Heuristic: openings on the exterior boundary (within 5% of bbox edge)
+       are likely windows; interior openings are likely doors.
+    """
+    opening_type = opening.get("opening_type", "")
+    if opening_type == "window":
+        return True
+    if opening_type == "door":
+        return False
+
     pts = opening.get("geometry", [])
     if not pts:
         return False
+
+    # 5% of each dimension as the "near-exterior-wall" threshold
+    edge_x = cs.width_px * 0.05
+    edge_y = cs.height_px * 0.05
+
     for p in pts[:2]:
-        x, y = p[0], p[1]
-        if x <= 5 or y <= 5:
+        x, y = float(p[0]), float(p[1])
+        if (x <= cs.min_x + edge_x or
+                y <= cs.min_y + edge_y or
+                x >= cs.max_x - edge_x or
+                y >= cs.max_y - edge_y):
             return True
     return False
 
@@ -515,13 +550,18 @@ async def model_reconstruct(ctx: dict, project_id: str) -> str | None:
         # ── Load ParsedPlan ──
         plan_row = db.execute(text(
             "SELECT id, walls, rooms, openings, bounding_box_px, confidence_overall, "
-            "ambiguity_flags FROM parsed_plans "
+            "ambiguity_flags, coordinate_origin FROM parsed_plans "
             "WHERE floorplan_asset_id = (SELECT floorplan_asset_id FROM projects WHERE id = :pid) "
             "ORDER BY created_at DESC LIMIT 1"
         ), {"pid": project_id}).mappings().first()
 
         if not plan_row:
             raise ValueError("No parsed plan found for project")
+
+        # Extract scale_info from coordinate_origin (set by the parse job)
+        coord_origin = plan_row["coordinate_origin"] or {}
+        scale_info_from_plan = coord_origin.get("scale_info")
+        ceiling_height_from_plan = coord_origin.get("ceiling_height_m")
 
         parsed_plan = {
             "id": str(plan_row["id"]),
@@ -531,6 +571,8 @@ async def model_reconstruct(ctx: dict, project_id: str) -> str | None:
             "bounding_box_px": plan_row["bounding_box_px"] or {},
             "confidence_overall": plan_row["confidence_overall"] or 0.0,
             "ambiguity_flags": plan_row["ambiguity_flags"] or [],
+            "scale_info": scale_info_from_plan,
+            "ceiling_height_m": ceiling_height_from_plan,
         }
 
         # ── Auto-approval check ──
@@ -554,6 +596,12 @@ async def model_reconstruct(ctx: dict, project_id: str) -> str | None:
         geometry_rules = rules_row["rules"] if rules_row else []
         params = _extract_rules(geometry_rules, defaults)
 
+        # Use ceiling height from parsed plan when available (overrides defaults)
+        ceiling_h_m = parsed_plan.get("ceiling_height_m")
+        if ceiling_h_m and 2.0 <= float(ceiling_h_m) <= 6.0:
+            params["floor_height"] = float(ceiling_h_m)
+            logger.info("Using ceiling height from parsed plan: %.2fm", ceiling_h_m)
+
         # ── Load style profile ID ──
         style_row = db.execute(text(
             "SELECT sp.id FROM style_profiles sp "
@@ -572,6 +620,7 @@ async def model_reconstruct(ctx: dict, project_id: str) -> str | None:
         cs = CoordinateSystem(
             bbox=parsed_plan["bounding_box_px"],
             rooms=parsed_plan["rooms"],
+            scale_info=parsed_plan.get("scale_info"),
         )
         logger.info("Coordinate system: px_per_meter=%.2f", cs.px_per_meter)
 
