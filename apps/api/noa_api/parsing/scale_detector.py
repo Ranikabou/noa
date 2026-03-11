@@ -136,10 +136,12 @@ def detect_scale_from_rooms(rooms: list, bounding_box: dict,
     if assumed_total_sqm:
         real_area = assumed_total_sqm
     else:
-        real_area = max(total_room_area_px * (15.0 / max(
-            bounding_box.get("max_x", 1) - bounding_box.get("min_x", 0),
-            bounding_box.get("max_y", 1) - bounding_box.get("min_y", 0),
-        )) ** 2, 20.0)
+        max_dim = max(
+            bounding_box.get("max_x", 0) - bounding_box.get("min_x", 0),
+            bounding_box.get("max_y", 0) - bounding_box.get("min_y", 0),
+            1,  # avoid division by zero when bounding_box is empty
+        )
+        real_area = max(total_room_area_px * (15.0 / max_dim) ** 2, 20.0)
 
     if total_room_area_px > 0 and real_area > 0:
         px_per_meter = float(np.sqrt(total_room_area_px / real_area))

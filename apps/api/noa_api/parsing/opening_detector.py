@@ -69,14 +69,17 @@ def _find_wall_gaps(walls: list, img_bin: np.ndarray) -> list[dict]:
 
             # Sample across wall width
             total_ink = 0
+            valid_samples = 0
             n_cross = max(int(thickness), 5)
             for ci in range(-n_cross, n_cross + 1):
                 sample_pt = center + ci * normal
                 sx, sy = int(sample_pt[0]), int(sample_pt[1])
                 if 0 <= sy < img_bin.shape[0] and 0 <= sx < img_bin.shape[1]:
                     total_ink += int(img_bin[sy, sx])
+                    valid_samples += 1
 
-            intensity_profile.append((t, total_ink / max(2 * n_cross + 1, 1)))
+            # Divide only by in-bounds samples to avoid false gaps at image edges
+            intensity_profile.append((t, total_ink / max(valid_samples, 1)))
 
         # Find gaps: regions where intensity drops below threshold
         threshold = 60  # average pixel value across wall cross-section
