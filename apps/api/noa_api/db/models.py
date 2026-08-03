@@ -118,6 +118,8 @@ class InspirationItem(Base):
     thumbnail_key = Column(Text)
     weight = Column(Float, nullable=False, default=1.0)
     sentiment = Column(Text, nullable=False, default="positive")
+    embedding = Column(JSONB)  # CLIP image embedding (768-dim list), shared space with render_outputs
+    embedding_model = Column(Text)
     annotations = Column(JSONB, nullable=False, default=list)
     highlighted_elements = Column(JSONB, nullable=False, default=list)
     rejected_elements = Column(JSONB, nullable=False, default=list)
@@ -199,6 +201,8 @@ class RenderOutput(Base):
     niqe_score = Column(Float)
     pixel_coverage = Column(Float)
     inspiration_alignment = Column(Float)
+    embedding = Column(JSONB)  # CLIP image embedding (768-dim list), shared space with inspiration_items
+    embedding_model = Column(Text)
     status = Column(Text, nullable=False, default="pending")
     error_message = Column(Text)
     schema_version = Column(Text, nullable=False, default="1.0")

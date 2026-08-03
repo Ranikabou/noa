@@ -42,6 +42,9 @@ npm run dev
 | `NEXT_PUBLIC_API_URL` | `http://localhost:8000` | API base URL for web |
 | `OPENAI_API_KEY` | — | **Required for Phase 2** floorplan parsing |
 | `OPENAI_VISION_MODEL` | `gpt-4o` | Vision model for floorplan analysis |
+| `CLIP_BACKEND` | `auto` | Image embeddings: `auto` (CLIP if installed, else hash fallback), `openclip`, or `hash` |
+| `CLIP_MODEL` | `ViT-L-14` | open_clip architecture for real embeddings (768-dim) |
+| `CLIP_PRETRAINED` | `openai` | open_clip checkpoint (install with `pip install -e "apps/api[clip]"`) |
 
 ## Repo structure
 

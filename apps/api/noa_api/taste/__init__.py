@@ -36,6 +36,7 @@ from .adapter import (
 from .constraints import HardConstraints, Palette
 from .elo import PairwiseComparison, compute_elo, expected_score, rank_by_elo
 from .manifold import cosine_similarity, knn_affinity, manifold_score
+from .pipeline import corpus_is_semantic, filter_render_batch
 from .rejection import (
     Candidate,
     Selection,
@@ -57,8 +58,10 @@ __all__ = [
     "candidate_from_render",
     "compute_elo",
     "constraints_from_style_profile",
+    "corpus_is_semantic",
     "cosine_similarity",
     "expected_score",
+    "filter_render_batch",
     "knn_affinity",
     "manifold_score",
     "rank_by_elo",

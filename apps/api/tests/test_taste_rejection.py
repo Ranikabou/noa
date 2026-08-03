@@ -311,3 +311,45 @@ def test_candidate_extra_embedding_overrides_stored():
     render = {"id": "r1", "embedding": [0.0]}
     cand = candidate_from_render(render, extra={"embedding": [9.0]})
     assert cand.embedding == [9.0]
+
+
+# --------------------------------------------------------------------------- #
+# pipeline (end-to-end with real embedding provider)
+# --------------------------------------------------------------------------- #
+
+
+def test_filter_render_batch_end_to_end(monkeypatch):
+    """Corpus and candidates embedded by the same provider → a meaningful cut."""
+    monkeypatch.setenv("CLIP_BACKEND", "hash")
+    from noa_api.embeddings import embed_image
+    from noa_api.taste import filter_render_batch, corpus_is_semantic
+
+    loved = embed_image(b"a-loved-interior")
+    hated = embed_image(b"a-hated-interior")
+
+    items = [
+        {"embedding": loved, "sentiment": "positive", "embedding_model": "hash-fallback"},
+        {"embedding": hated, "sentiment": "negative", "embedding_model": "hash-fallback"},
+    ]
+    profile = {"style_signals": {"negative_preferences": ["neon"], "material_palette": []}}
+
+    candidates = [
+        {"id": "on_canon", "embedding": loved},                 # exactly the loved vector
+        {"id": "on_reject", "embedding": hated},                # exactly the hated vector
+        {"id": "off", "embedding": embed_image(b"unrelated")},  # elsewhere on the sphere
+    ]
+    extras = {"on_canon": {"tags": ["neon"]}}  # disqualify the best scorer
+
+    sel = filter_render_batch(items, profile, candidates, keep=1, extras=extras)
+
+    # The one carrying a refused motif is out despite a perfect manifold score;
+    # among the rest, the near-reject loses to the neutral candidate.
+    assert [v.candidate_id for v in sel.kept] == ["off"]
+    assert sel.seen == 3
+    on_canon = next(v for v in sel.rejected if v.candidate_id == "on_canon")
+    assert on_canon.disqualified
+
+    # Hash-fallback corpus is geometry without meaning — flagged as non-semantic.
+    assert corpus_is_semantic(items) is False
+    clip_items = [{"embedding": loved, "embedding_model": "clip-vit-l-14"}]
+    assert corpus_is_semantic(clip_items) is True

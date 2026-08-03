@@ -13,6 +13,7 @@ from openai import OpenAI
 from sqlalchemy import text
 
 from noa_api.db.session import SessionLocal
+from noa_api.embeddings import active_model, embed_images
 from noa_api.events import emit_project_event
 
 logger = logging.getLogger("noa.jobs.style_inference")
@@ -35,6 +36,24 @@ def _s3_client():
 
 def _now() -> str:
     return datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%S.%f")[:-3] + "Z"
+
+
+def _centroid(vectors: list) -> list | None:
+    """Mean of unit vectors, re-normalised — the canon's centre on the sphere.
+
+    Returns ``None`` for an empty set so the style profile stores SQL NULL rather
+    than a meaningless zero vector.
+    """
+    if not vectors:
+        return None
+    dim = len(vectors[0])
+    acc = [0.0] * dim
+    for v in vectors:
+        for i in range(dim):
+            acc[i] += v[i]
+    mean = [x / len(vectors) for x in acc]
+    norm = sum(x * x for x in mean) ** 0.5 or 1.0
+    return [x / norm for x in mean]
 
 
 SYSTEM_PROMPT = """You are an expert interior designer and architectural style analyst. Given one or more inspiration images, analyze the visual style and return ONLY valid JSON matching this exact schema:
@@ -149,10 +168,11 @@ async def style_inference(ctx: dict, board_id: str, project_id: str) -> str | No
         )
         db.commit()
 
-        # Fetch all items from the board
+        # Fetch all items from the board (with sentiment: positive = canon,
+        # negative = near-miss rejection set for the taste manifold).
         r = db.execute(
             text(
-                "SELECT id, storage_key FROM inspiration_items "
+                "SELECT id, storage_key, sentiment FROM inspiration_items "
                 "WHERE board_id = :bid AND upload_status = 'ready' AND storage_key IS NOT NULL"
             ),
             {"bid": board_id},
@@ -161,13 +181,20 @@ async def style_inference(ctx: dict, board_id: str, project_id: str) -> str | No
         if not items:
             raise ValueError("No ready images in board")
 
-        image_data_list = []
+        raw_bytes = []
         item_ids = []
-        for item_id, storage_key in items:
+        sentiments = []
+        for item_id, storage_key, sentiment in items:
             buf = io.BytesIO()
             s3.download_fileobj(BUCKET, storage_key, buf)
-            image_data_list.append((buf.getvalue(), "image/jpeg"))
+            raw_bytes.append(buf.getvalue())
             item_ids.append(str(item_id))
+            sentiments.append(sentiment or "positive")
+
+        # GPT-4o reads style signals from the loved images; the rejected ones
+        # define the boundary, not the direction, so keep them out of the prompt.
+        positive_bytes = [b for b, s in zip(raw_bytes, sentiments) if s == "positive"]
+        image_data_list = [(b, "image/jpeg") for b in (positive_bytes or raw_bytes)]
 
         emit_project_event(
             project_id,
@@ -190,8 +217,26 @@ async def style_inference(ctx: dict, board_id: str, project_id: str) -> str | No
         style_signals = result.get("style_signals", {})
         confidence = result.get("confidence_per_signal", {})
 
-        # Placeholder embedding (768-dim zero vector — real embeddings would come from CLIP)
-        embedding = [0.0] * 768
+        # Real CLIP embeddings: embed every item, store each so the taste manifold
+        # can measure candidate distance to the canon and to the rejection set.
+        embedding_model = active_model()
+        item_embeddings = embed_images(raw_bytes)
+        for iid, emb in zip(item_ids, item_embeddings):
+            db.execute(
+                text(
+                    "UPDATE inspiration_items "
+                    "SET embedding = CAST(:emb AS jsonb), embedding_model = :model "
+                    "WHERE id = :id"
+                ),
+                {"emb": json.dumps(emb), "model": embedding_model, "id": iid},
+            )
+
+        # The profile's embedding is the centre of the loved images (the canon
+        # centroid), not a zero vector. NULL when the board has no positives.
+        positive_embeddings = [
+            emb for emb, s in zip(item_embeddings, sentiments) if s == "positive"
+        ]
+        embedding_vector = _centroid(positive_embeddings)
 
         profile_id = str(uuid4())
         db.execute(
@@ -199,16 +244,17 @@ async def style_inference(ctx: dict, board_id: str, project_id: str) -> str | No
                 """
                 INSERT INTO style_profiles
                     (id, inspiration_board_id, inference_job_id,
-                     style_signals, confidence_per_signal, source_image_ids)
+                     embedding_vector, style_signals, confidence_per_signal, source_image_ids)
                 VALUES
                     (:id, :bid, :jid,
-                     CAST(:signals AS jsonb), CAST(:conf AS jsonb), CAST(:imgs AS uuid[]))
+                     CAST(:emb AS jsonb), CAST(:signals AS jsonb), CAST(:conf AS jsonb), CAST(:imgs AS uuid[]))
                 """
             ),
             {
                 "id": profile_id,
                 "bid": board_id,
                 "jid": job_id,
+                "emb": json.dumps(embedding_vector) if embedding_vector is not None else None,
                 "signals": json.dumps(style_signals),
                 "conf": json.dumps(confidence),
                 "imgs": "{" + ",".join(item_ids) + "}",

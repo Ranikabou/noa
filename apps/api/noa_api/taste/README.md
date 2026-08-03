@@ -65,11 +65,38 @@ selection.selectivity    # 0.03 — the taste
 selection.rejected       # every reject, with its reasons (refused_motif / off_palette / below_cut ...)
 ```
 
+## Embeddings — the space the manifold lives in
+
+The manifold only means anything once images are vectors in one shared, semantic
+space. That space is `noa_api.embeddings`:
+
+- **`clip-vit-l-14`** (real CLIP, 768-dim) when `open_clip_torch` + `torch` are
+  installed (`pip install -e "apps/api[clip]"`). This is the semantic embedding
+  that gives the manifold actual taste.
+- **`hash-fallback`** — a deterministic, dependency-free vector used in dev/CI so
+  the pipeline runs without torch. It has geometry but **no meaning**; it proves
+  the wiring, it is not taste. `taste.corpus_is_semantic(items)` reports which one
+  a corpus carries.
+
+`style_inference` embeds every inspiration item and stores it on
+`inspiration_items.embedding` (canon = positive items, rejections = negative
+items); the style profile's `embedding_vector` is the positive-exemplar centroid,
+not the old zero vector. Render candidates share the identical provider, so
+corpus and candidates are always comparable.
+
 ## Where it plugs in
 
 This is the discriminator half of the **critic-worker** (`services/critic-worker`).
 The critic already scores plan fidelity and geometric consistency; the taste
 function adds the aesthetic cut, feeding `CritiqueReport.scores.inspiration_alignment`
-and `render_coherence` and gating which `RenderImage`s reach the user. Because the
-core is pure and DB-free, the ARQ integration is only a matter of loading the board
-corpus and render candidates and passing them in.
+and `render_coherence` and gating which renders reach the user. One call does it:
+
+```python
+from noa_api.taste import filter_render_batch
+
+selection = filter_render_batch(inspiration_items, style_profile, render_candidates, keep=3)
+```
+
+The only thing still stubbed upstream is the render-worker itself: once it produces
+candidates (and embeds them via `noa_api.embeddings`), this filter cuts them with
+no further wiring.
